@@ -1,82 +1,65 @@
 """
-    solar_phase_angle(target, sun, observer)
-Compute the solar phase angle for a target object given the positions of the sun and an observer.
+    relative_directions(target, sun, observer)
 
-# Arguments
-- `target::SVector{6}`: The state vector (position and velocity) of the target object.
-- `sun::SVector{6}`: The state vector (position and velocity) of the sun.
-- `observer::SVector{6}`: The state vector (position and velocity) of the observer.
+Unit vectors from the target to the Sun and from the target to the observer.
+States may be `CartesianState`s or 6-vectors of quantities.
 """
-function relative_directions(
-    target::SVector{6},
-    sun::SVector{6},
-    observer::SVector{6}
-)
-    r_target = uconvert.(u"m", target[1:3])
-    r_sun = uconvert.(u"m", sun[1:3])
-    r_observer = uconvert.(u"m", observer[1:3])
-    object2sun = (r_sun - r_target) / norm(r_sun - r_target)
-    object2observer = (r_observer - r_target) / norm(r_observer - r_target)
-    return SVector{3}(ustrip.(object2sun)), SVector{3}(ustrip.(object2observer))
+function relative_directions(target, sun, observer)
+    r_target = CartesianState(target).r
+    to_sun = CartesianState(sun).r - r_target
+    to_observer = CartesianState(observer).r - r_target
+    return (
+        SVector{3, Float64}(to_sun / norm(to_sun)),
+        SVector{3, Float64}(to_observer / norm(to_observer))
+    )
 end
 
 """
     solar_phase_angle(object2sun, object2observer)
-Compute the solar phase angle given the unit vectors from the target to the sun and from the target
-to the observer.
+    solar_phase_angle(target, sun, observer)
 
-# Arguments
-- `object2sun::SVector{3}`: The unit vector from the target to the sun.
-- `object2observer::SVector{3}`: The unit vector from the target to the observer.
+Sun-target-observer angle (rad, plain Float64).
 """
 function solar_phase_angle(object2sun::SVector{3}, object2observer::SVector{3})
     return acos(clamp(dot(object2sun, object2observer), -1.0, 1.0))
 end
 
-"""
-    solar_apparent_radius(target, sun)
-Compute the apparent radius of the sun as seen from the target object.
-
-# Arguments
-- `target::SVector{6}`: The state vector (position and velocity) of the target object.
-- `sun::SVector{6}`: The state vector (position and velocity) of the sun.
-"""
-function solar_apparent_radius(target::SVector{6}, sun::SVector{6})
-    _, sun_radius = bodvrd("SUN", "RADII", 3)
-    sun_radius = sun_radius * u"km"
-    distance = norm(sun[1:3] - target[1:3])
-    sun_radius = ustrip(u"m", sun_radius)
-    distance = ustrip(u"m", distance)
-    return asin(sun_radius / distance)
+function solar_phase_angle(target, sun, observer)
+    return solar_phase_angle(relative_directions(target, sun, observer)...)
 end
 
 """
-    lambertian_extended_source(target, sun, observer, radius, coeff_diffusion)
-Compute the exitance of a Lambertian extended source
+    solar_apparent_radius(target, sun)
+
+Angular radius of the Sun seen from the target (rad, plain Float64).
+"""
+function solar_apparent_radius(target, sun)
+    sun_radius = bodvrd("SUN", "RADII")[1] * u"km"
+    distance = norm(CartesianState(sun).r - CartesianState(target).r)
+    return asin(uconvert(NoUnits, sun_radius / distance))
+end
+
+"""
+    lambertian_extended_source(target, sun, observer, radius, albedo)
+
+Reflection factor of a Lambertian sphere illuminated by the (extended) Sun:
+the reflected irradiance at distance `d` is
+`solar_irradiance * lambertian_extended_source(...) / d^2`.
+
+Returns an area (m^2). For a point-source Sun this reduces to
+`(2/3) (albedo/pi) R^2 [sin(a) + (pi - a) cos(a)]`.
 
 # Arguments
-- `target::SVector{6}`: The state vector (position and velocity) of the target object.
-- `sun::SVector{6}`: The state vector (position and velocity) of the sun.
-- `observer::SVector{6}`: The state vector (position and velocity) of the observer.
-- `radius::Float64`: The radius of the target object.
-- `coeff_diffusion::Float64`: The diffusion coefficient of the target object's surface.
+- `target`, `sun`, `observer`: States (any units).
+- `radius`: Sphere radius (any length unit).
+- `albedo`: Lambertian (diffuse) reflectance, 0-1.
 """
-function lambertian_extended_source(
-    target::SVector{6},
-    sun::SVector{6},
-    observer::SVector{6},
-    radius::Float64,
-    coeff_diffusion::Float64
-)
-    # Relative directions
-    object2sun, object2observer = relative_directions(target, sun, observer)
+function lambertian_extended_source(target, sun, observer, radius, albedo)
+    r = to_unit(u"m", radius)
+    rho = to_fraction(albedo)
+    phase = solar_phase_angle(target, sun, observer)
+    theta_s = solar_apparent_radius(target, sun)
 
-    # Angles
-    phase_angle = solar_phase_angle(object2sun, object2observer)
-    apparent_radius = solar_apparent_radius(target, sun)
-
-    exitance = 1/6 * coeff_diffusion/pi * radius^2 * cos(apparent_radius) *
-        (5-cos(apparent_radius)) * (sin(phase_angle)+ (pi-phase_angle)*cos(phase_angle))
-
-    return exitance
+    return (1 / 6) * (rho / pi) * r^2 * cos(theta_s) * (5 - cos(theta_s)) *
+           (sin(phase) + (pi - phase) * cos(phase))
 end
