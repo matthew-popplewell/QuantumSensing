@@ -1,0 +1,20 @@
+name = "Sensors"
+uuid = "b02c3d70-5e23-4fa6-80d5-ff6a4408e312"
+version = "0.1.0"
+authors = ["Matthew Popplewell <mpopplew@purdue.edu>"]
+
+[deps]
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SPICE = "5bab7191-041a-5c2e-a744-024b9c3a5062"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+
+[compat]
+Distributions = "0.25.131"
+LinearAlgebra = "1.13.0"
+Random = "1.11.0"
+SPICE = "0.2.5"
+StaticArrays = "1.9.23"
+Unitful = "1.29.0"

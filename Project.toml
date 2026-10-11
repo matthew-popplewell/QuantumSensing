@@ -1,0 +1,14 @@
+[deps]
+Astrodynamics = "8e4b01cb-20d7-422e-8ecc-292cdbc44179"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+SPICE = "5bab7191-041a-5c2e-a744-024b9c3a5062"
+Sensors = "b02c3d70-5e23-4fa6-80d5-ff6a4408e312"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+
+[sources]
+Astrodynamics = {path = "packages/Astrodynamics"}
+Sensors = {path = "packages/Sensors"}
