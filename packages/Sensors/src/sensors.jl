@@ -104,37 +104,44 @@ for telescope mount tracking modes (:sidereal or :geo_track).
 """
 function compute_pixel_velocity(
     ccd::CCD,
-    target::AbstractVector{<:Quantity},       
+    target::AbstractVector{<:Quantity},
     observer::AbstractVector{<:Quantity},
-    tracking_mode::Symbol = :sidereal  
+    tracking_mode::Symbol = :sidereal
 )
-    # Standardize position to meters and velocity to m/s
-    rho = ustrip.(u"m", target[1:3] - observer[1:3])
-    v_rel = ustrip.(u"m/s", target[4:6] - observer[4:6])
+    # Convert positions and velocities to SI numerical values.
+    rho = ustrip.(u"m", target[1:3]) .-
+          ustrip.(u"m", observer[1:3])
+
+    v_rel = ustrip.(u"m/s", target[4:6]) .-
+            ustrip.(u"m/s", observer[4:6])
+
     range_dist = norm(rho)
+    range_dist > 0 || throw(ArgumentError("Target and observer positions coincide."))
 
-    # 2. Target inertial apparent angular velocity vector [rad/s]
-    omega_target = cross(rho, v_rel) / (range_dist^2)
+    # Numerically represented angular velocity, in rad/s
+    # (radians are dimensionless).
+    omega_target = cross(rho, v_rel) / range_dist^2
 
-    # 3. Telescope tracking rate
-    omega_earth = 7.292115e-5u"rad/s"
-    if tracking_mode == :sidereal
-        omega_scope = SVector(0.0u"rad/s", 0.0u"rad/s", omega_earth)
+    omega_earth = 7.292115e-5  # rad/s, numerical value
+
+    omega_scope = if tracking_mode == :sidereal
+        SVector(0.0, 0.0, omega_earth)
     elseif tracking_mode == :geo_track
-        omega_scope = omega_target
+        omega_target
     else
-        error("Unknown tracking mode: $tracking_mode. Use :sidereal or :geo_track.")
+        throw(ArgumentError(
+            "Unknown tracking mode: $tracking_mode. Use :sidereal or :geo_track."
+        ))
     end
 
-    # 4. Effective angular velocity [rad/s]
     omega_eff = omega_target - omega_scope
 
-    # 5. Convert to focal plane linear velocity and then pixel velocity
-    v_focal_x = omega_eff[2] * ccd.focal_length
-    v_focal_y = -omega_eff[1] * ccd.focal_length
+    focal_length_m = ustrip(u"m", ccd.focal_length)
+    pixel_pitch_m = ustrip(u"m", ccd.pixel_pitch)
 
-    vx_pix = ustrip(v_focal_x / ccd.pixel_pitch)
-    vy_pix = ustrip(v_focal_y / ccd.pixel_pitch)
+    # Numerical result in pixels/s.
+    vx_pix =  omega_eff[2] * focal_length_m / pixel_pitch_m
+    vy_pix = -omega_eff[1] * focal_length_m / pixel_pitch_m
 
     return (vx_pix, vy_pix)
 end
@@ -206,8 +213,8 @@ function simulate_ccd_image(
     dark_current = ustrip(u"s^-1", ccd.dark_current)
     boresight_ra = ustrip(u"rad", ccd.boresight_ra)
     boresight_dec = ustrip(u"rad", ccd.boresight_dec)
-    fwhm = ustrip(ccd.FWHM)
-    pixel_scale = ustrip(ccd.pixel_scale)
+    fwhm = ustrip(u"arcsec", ccd.FWHM)
+    pixel_scale = ustrip(u"arcsec", ccd.pixel_scale)
 
     # Signal
     target_signal = simulate_ccd_signal(
