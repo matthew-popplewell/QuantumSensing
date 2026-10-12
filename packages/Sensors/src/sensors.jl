@@ -1,285 +1,310 @@
+#=
+Instrument description and focal-plane geometry.
+
+Focal-plane convention: x (column) increases toward +RA (east on the sky) and
+y (row) toward +Dec (north). Pixel centres are at integer coordinates, with
+the boresight at the centre of the (sub)frame.
+=#
+
 """
-    CCD(aperature_area, effective_aperture_area, focal_length, pixel_scale, quantum_efficiency, dark_current, read_noise, exposure_time, gain)
-CCD sensor parameters.
+    Telescope(; aperture_diameter, focal_length, obstruction_ratio=0.0,
+              throughput=1.0)
+
+Telescope optics.
 
 # Fields
-- `aperature_area::Float64`: The area of the CCD's aperature.
-- `effective_aperture_area::Float64`: The effective area of the CCD's aperature.
-- `focal_length::Float64`: The focal length of the CCD.
-- `pixel_scale::Float64`: The pixel scale of the CCD.
-- `quantum_efficiency::Float64`: The quantum efficiency of the CCD (between 0 and 1).
-- `dark_current::Float64`: The dark current of the CCD in electrons per second per pixel.
-- `read_noise::Float64`: The read noise of the CCD in electrons per pixel.
-- `exposure_time::Float64`: The exposure time of the CCD.
-- `gain::Float64`: The gain of the CCD in electrons per ADU (analog-to-digital unit).
-- `effective_wavelength::Float64`: The effective wavelength of the CCD.
-- `fwhm::Float64`: The Full Width at Half Maximum of the PSF in arcseconds.
-- `boresight_ra::Float64`: The boresight right ascension of the CCD in radians.
-- `boresight_dec::Float64`: The boresight declination of the CCD in radians.
+- `aperture_diameter::Meters`: Primary mirror diameter.
+- `focal_length::Meters`: Effective focal length.
+- `obstruction_ratio::Float64`: Central obstruction, as a fraction of the
+  primary **diameter**.
+- `throughput::Float64`: Product of optical transmissions (mirrors,
+  corrector, filter), 0-1.
 """
-struct CCD
-    aperture_area::Quantity{Float64, Unitful.𝐋^2}
-    effective_aperture_area::Quantity{Float64, Unitful.𝐋^2}
-    focal_length::Quantity{Float64, Unitful.𝐋}
-    pixel_scale::Quantity{Float64, Unitful.NoDims}
-    pixel_pitch::Quantity{Float64, Unitful.𝐋}
+struct Telescope
+    aperture_diameter::Meters
+    focal_length::Meters
+    obstruction_ratio::Float64
+    throughput::Float64
+end
+
+function Telescope(;
+    aperture_diameter,
+    focal_length,
+    obstruction_ratio = 0.0,
+    throughput = 1.0
+)
+    return Telescope(
+        to_unit(u"m", aperture_diameter),
+        to_unit(u"m", focal_length),
+        to_fraction(obstruction_ratio),
+        to_fraction(throughput)
+    )
+end
+
+"""
+    collecting_area(telescope)
+
+Unobstructed collecting area, `pi/4 D^2 (1 - obstruction_ratio^2)`.
+"""
+function collecting_area(t::Telescope)
+    return (pi / 4) * t.aperture_diameter^2 * (1 - t.obstruction_ratio^2)
+end
+
+"""
+    Detector(; pixel_pitch, npixels, quantum_efficiency, read_noise,
+             dark_current, gain, full_well=Inf, bias=0.0, bit_depth=16)
+
+Detector characteristics. Electron and ADU counts are plain numbers.
+
+# Fields
+- `pixel_pitch::Meters`: Pixel size.
+- `npixels::Tuple{Int, Int}`: Full-frame size (rows, columns).
+- `quantum_efficiency::Float64`: QE in the band, 0-1 (or `u"percent"`).
+- `read_noise::Float64`: Read noise, e- RMS per pixel.
+- `dark_current::PerSecond`: Dark current, e- per pixel per second.
+- `gain::Float64`: e- per ADU.
+- `full_well::Float64`: Full-well capacity, e- (saturation level).
+- `bias::Float64`: Bias offset, ADU.
+- `bit_depth::Int`: ADC bits.
+"""
+struct Detector
+    pixel_pitch::Meters
+    npixels::Tuple{Int, Int}
     quantum_efficiency::Float64
-    dark_current::Quantity{Float64, Unitful.𝐓^-1}
     read_noise::Float64
-    exposure_time::Quantity{Float64, Unitful.𝐓}
+    dark_current::PerSecond
     gain::Float64
-    effective_wavelength::Quantity{Float64, Unitful.𝐋}
-    FWHM::Quantity{Float64, Unitful.NoDims}
-    boresight_ra::Quantity{Float64, Unitful.NoDims}
-    boresight_dec::Quantity{Float64, Unitful.NoDims}
+    full_well::Float64
+    bias::Float64
+    bit_depth::Int
+end
+
+function Detector(;
+    pixel_pitch,
+    npixels,
+    quantum_efficiency,
+    read_noise,
+    dark_current,
+    gain,
+    full_well = Inf,
+    bias = 0.0,
+    bit_depth = 16
+)
+    return Detector(
+        to_unit(u"m", pixel_pitch),
+        Tuple{Int, Int}(npixels),
+        to_fraction(quantum_efficiency),
+        Float64(read_noise),
+        to_unit(u"s^-1", dark_current),
+        Float64(gain),
+        Float64(full_well),
+        Float64(bias),
+        Int(bit_depth)
+    )
 end
 
 """
-    compute_start_pixel(target, observer, boresight_ra_dec, focal_length, pixel_pitch, image_size)
+    Bandpass(; wavelength, width, zero_point, sun_magnitude)
 
-Projects a target's 3D state vector onto the CCD pixel grid given telescope pointing.
+Photometric band.
+
+# Fields
+- `wavelength::Meters`: Pivot wavelength (used for F_nu -> F_lambda and the
+  mean photon energy).
+- `width::Meters`: Effective width.
+- `zero_point::SpectralFlux`: Flux density of a magnitude-0 source. Accepts
+  F_lambda (e.g. `u"erg/s/cm^2/Å"`) or F_nu (e.g. `u"W/m^2/Hz"`); F_nu is
+  converted with the pivot wavelength.
+- `sun_magnitude::Float64`: Apparent magnitude of the Sun at 1 AU.
 """
-function compute_start_pixel(
-    ccd::CCD,
-    target::AbstractVector{<:Quantity},
-    observer::AbstractVector{<:Quantity},
-    image_size::Tuple{Int, Int}
-)
-    # Strip
-    alpha_0 = ccd.boresight_ra
-    delta_0 = ccd.boresight_dec
-    focal_length = ustrip(u"m", ccd.focal_length)
-    pixel_pitch = ustrip(u"m", ccd.pixel_pitch)
-
-    # Convert positions to meters for uniform calculation
-    target_m = ustrip.(u"m", target[1:3])
-    observer_m = ustrip.(u"m", observer[1:3])
-    
-    rho = target_m - observer_m
-    rho_norm = norm(rho)
-
-    # Target unit vector (dimensionless components)
-    ux = ustrip(rho[1] / rho_norm)
-    uy = ustrip(rho[2] / rho_norm)
-    uz = ustrip(rho[3] / rho_norm)
-
-    delta = asin(uz)
-    alpha = atan(uy, ux)
-
-    # Gnomonic (Tangent Plane) Projection
-    cos_d, sin_d = cos(delta), sin(delta)
-    cos_d0, sin_d0 = cos(delta_0), sin(delta_0)
-    cos_d_ra, sin_d_ra = cos(alpha - alpha_0), sin(alpha - alpha_0)
-
-    denominator = sin_d0 * sin_d + cos_d0 * cos_d * cos_d_ra
-    xi = (cos_d * sin_d_ra) / denominator
-    eta = (cos_d0 * sin_d - sin_d0 * cos_d * cos_d_ra) / denominator
-
-    # Convert to focal plane meters
-    x_focal = focal_length * xi
-    y_focal = focal_length * eta
-
-    # Convert to pixel coordinates relative to chip center
-    nrows, ncols = image_size
-    cx = ncols / 2.0
-    cy = nrows / 2.0
-
-    x_pixel = cx + ustrip(x_focal / pixel_pitch)
-    y_pixel = cy + ustrip(y_focal / pixel_pitch)
-
-    return (x_pixel, y_pixel)
+struct Bandpass
+    wavelength::Meters
+    width::Meters
+    zero_point::SpectralFlux
+    sun_magnitude::Float64
 end
 
-"""
-    compute_pixel_velocity(ccd, target, observer, tracking_mode)
-
-Computes the apparent pixel velocity (pixels/second) of a target object accounting 
-for telescope mount tracking modes (:sidereal or :geo_track).
-
-# Arguments
-- `ccd::CCD`: The CCD sensor parameters.
-- `target::SVector{6, Float64}`: The state vector (position and velocity) of the target object.
-- `observer::SVector{6, Float64}`: The state vector (position and velocity) of the observer.
-- `tracking_mode::Symbol`: The tracking mode of the telescope mount. Can be `:sidereal` or `:geo_track`.
-"""
-function compute_pixel_velocity(
-    ccd::CCD,
-    target::AbstractVector{<:Quantity},
-    observer::AbstractVector{<:Quantity},
-    tracking_mode::Symbol = :sidereal
-)
-    # Convert positions and velocities to SI numerical values.
-    rho = ustrip.(u"m", target[1:3]) .-
-          ustrip.(u"m", observer[1:3])
-
-    v_rel = ustrip.(u"m/s", target[4:6]) .-
-            ustrip.(u"m/s", observer[4:6])
-
-    range_dist = norm(rho)
-    range_dist > 0 || throw(ArgumentError("Target and observer positions coincide."))
-
-    # Numerically represented angular velocity, in rad/s
-    # (radians are dimensionless).
-    omega_target = cross(rho, v_rel) / range_dist^2
-
-    omega_earth = 7.292115e-5  # rad/s, numerical value
-
-    omega_scope = if tracking_mode == :sidereal
-        SVector(0.0, 0.0, omega_earth)
-    elseif tracking_mode == :geo_track
-        omega_target
+function Bandpass(; wavelength, width, zero_point, sun_magnitude)
+    lam = to_unit(u"m", wavelength)
+    zp = if dimension(zero_point) == dimension(u"W/m^2/Hz")
+        to_unit(u"W/m^3", zero_point * Unitful.c0 / lam^2)
     else
-        throw(ArgumentError(
-            "Unknown tracking mode: $tracking_mode. Use :sidereal or :geo_track."
-        ))
+        to_unit(u"W/m^3", zero_point)
     end
-
-    omega_eff = omega_target - omega_scope
-
-    focal_length_m = ustrip(u"m", ccd.focal_length)
-    pixel_pitch_m = ustrip(u"m", ccd.pixel_pitch)
-
-    # Numerical result in pixels/s.
-    vx_pix =  omega_eff[2] * focal_length_m / pixel_pitch_m
-    vy_pix = -omega_eff[1] * focal_length_m / pixel_pitch_m
-
-    return (vx_pix, vy_pix)
+    return Bandpass(lam, to_unit(u"m", width), zp, Float64(sun_magnitude))
 end
 
 """
-    simulate_ccd_signal(ccd, target, sun, observer, radius, coeff_diffusion)
-Simulate the signal received by a CCD sensor from a target object.
+    Sensor(telescope, detector, band)
 
-# Arguments
-- `ccd::CCD`: The CCD sensor parameters.
-- `target::SVector{6, Float64}`: The state vector (position and velocity) of the target object.
-- `sun::SVector{6, Float64}`: The state vector (position and velocity) of the sun.
-- `observer::SVector{6, Float64}`: The state vector (position and velocity) of the observer.
-- `radius::Float64`: The radius of the target object.
-- `coeff_diffusion::Float64`: The diffusion coefficient of the target object's surface.
+A telescope + detector + band combination.
 """
-function simulate_ccd_signal(
-    ccd::CCD,
-    target::SVector{6},
-    sun::SVector{6},
-    observer::SVector{6},
-    radius::Float64,
-    coeff_diffusion::Float64
-)
-    # Extract SI base values safely using ustrip
-    effective_aperture_area = ustrip(u"m^2", ccd.effective_aperture_area)
-    exposure_time = ustrip(u"s", ccd.exposure_time)
-    effective_wavelength = ustrip(u"m", ccd.effective_wavelength)
-
-    r_sun = ustrip.(u"m", sun[1:3])
-    r_target = ustrip.(u"m", target[1:3])
-    r_observer = ustrip.(u"m", observer[1:3])
-    
-    au_m = ustrip(u"m", AU)
-    solar_flux = ustrip(u"W/m^2", SOLAR_CONSTANT)
-    planck = ustrip(u"J*s", PLANCKS_CONSTANT)
-    speed_light = ustrip(u"m/s", SPEED_LIGHT)
-
-    # Reflectance of the target object using Lambertian model
-    reflectance = lambertian_extended_source(target, sun, observer, radius, coeff_diffusion)
-    
-    # Irradiance at the CCD
-    solar_irradiance = solar_flux * (au_m / norm(r_sun - r_target))^2
-    target_irradiance = reflectance * solar_irradiance / norm(r_observer - r_target)^2
-
-    # Photon flux at the CCD
-    photon_energy = planck * speed_light / effective_wavelength
-    photon_flux = target_irradiance * effective_aperture_area / photon_energy # whole aperature
-    
-    # Deficiencies and exposure time
-    signal = photon_flux * ccd.quantum_efficiency * exposure_time
-
-    return signal
+struct Sensor
+    telescope::Telescope
+    detector::Detector
+    band::Bandpass
 end
 
-function simulate_ccd_image(
-    ccd::CCD,
-    target::SVector{6},
-    sun::SVector{6},
-    observer::SVector{6},
-    radius::Float64,
-    coeff_diffusion::Float64,
-    image_size::Tuple{Int, Int} = (1024, 1024)
+Sensor(; telescope, detector, band) = Sensor(telescope, detector, band)
+
+"""
+    pixel_scale(sensor)
+
+Angular size of one pixel (arcsec).
+"""
+function pixel_scale(s::Sensor)
+    ratio = uconvert(NoUnits, s.detector.pixel_pitch / s.telescope.focal_length)
+    return uconvert(u"arcsec", ratio * u"rad")
+end
+
+"""
+    field_of_view(sensor, npixels=sensor.detector.npixels)
+
+Angular extent (rows, columns) of a frame of `npixels` (degrees).
+"""
+function field_of_view(s::Sensor, npixels::Tuple{Int, Int} = s.detector.npixels)
+    return uconvert.(u"°", npixels .* pixel_scale(s))
+end
+
+"""
+    Observation(; boresight, exposure_time, seeing_fwhm, tracking=:sidereal)
+
+One exposure. Target and observer states passed alongside are taken at the
+exposure start.
+
+# Fields
+- `boresight_ra::Radians`, `boresight_dec::Radians`: Pointing at exposure
+  start (set with `boresight = (ra, dec)`, any angle units; see
+  `point_at`).
+- `exposure_time::Seconds`: Integration time.
+- `seeing_fwhm::Radians`: Gaussian PSF FWHM.
+- `tracking::Symbol`: Mount mode:
+    - `:sidereal`: fixed on the stars (GEO objects streak at ~15"/s);
+    - `:earth_fixed`: mount stopped (stars streak, GEO is ~stationary);
+    - `:rate_track`: follows the target (point source).
+"""
+struct Observation
+    boresight_ra::Radians
+    boresight_dec::Radians
+    exposure_time::Seconds
+    seeing_fwhm::Radians
+    tracking::Symbol
+end
+
+function Observation(;
+    boresight,
+    exposure_time,
+    seeing_fwhm,
+    tracking::Symbol = :sidereal
 )
-    nrows, ncols = image_size
-    image = zeros(Float64, nrows, ncols)
-
-    exposure_time = ustrip(u"s", ccd.exposure_time)
-    dark_current = ustrip(u"s^-1", ccd.dark_current)
-    boresight_ra = ustrip(u"rad", ccd.boresight_ra)
-    boresight_dec = ustrip(u"rad", ccd.boresight_dec)
-    fwhm = ustrip(u"arcsec", ccd.FWHM)
-    pixel_scale = ustrip(u"arcsec", ccd.pixel_scale)
-
-    # Signal
-    target_signal = simulate_ccd_signal(
-        ccd, target, sun, observer, radius, coeff_diffusion
+    tracking in (:sidereal, :earth_fixed, :rate_track) || throw(ArgumentError(
+        "Unknown tracking mode $tracking. Use :sidereal, :earth_fixed " *
+        "or :rate_track."
+    ))
+    return Observation(
+        to_unit(u"rad", boresight[1]),
+        to_unit(u"rad", boresight[2]),
+        to_unit(u"s", exposure_time),
+        to_unit(u"rad", seeing_fwhm),
+        tracking
     )
+end
 
-    # Background signal and dark current
-    background_signal = 0.0 # Placeholder for background signal calculation
-    noise_lambda = exposure_time * (background_signal + dark_current)
-    noise = rand(Poisson(noise_lambda), (nrows, ncols))
-    image .+= noise
-    
-    # Sub-stepped spatial projection
-    pixel_velocity = compute_pixel_velocity(ccd, target, observer)
-    start_pixel = compute_start_pixel(
-        ccd, target, observer, image_size
-    )
-    fwhm_pixels = fwhm / pixel_scale
-    sigma = fwhm_pixels / (2.0 * sqrt(2.0 * log(2.0)))
-    displacement_magnitude = sqrt(pixel_velocity[1]^2 + pixel_velocity[2]^2) * exposure_time
-    num_substeps = max(10, Int(ceil(displacement_magnitude * 4.0)))
-    dt = exposure_time / num_substeps
-    signal_per_substep = target_signal / num_substeps
-    box_radius = ceil(Int, 3.0 * sigma)
+"""
+    point_at(target, observer)
 
-    for step in 0:(num_substeps-1)
-        t = (step + 0.5) * dt
-        xc = start_pixel[1] + pixel_velocity[1] * t
-        yc = start_pixel[2] + pixel_velocity[2] * t
+Boresight `(ra, dec)` that centres `target` as seen from `observer`.
+"""
+point_at(target, observer) = radec(target, observer)
 
-        min_r = max(1, floor(Int, yc - box_radius))
-        max_r = min(nrows, ceil(Int, yc + box_radius))
-        min_c = max(1, floor(Int, xc - box_radius))
-        max_c = min(ncols, ceil(Int, xc + box_radius))
+"""
+    boresight_at(obs, target, observer, t)
 
-        local_sum = 0.0
-        local_weights = zeros(Float64, max_r - min_r + 1, max_c - min_c + 1)
-
-        for r in min_r:max_r, c in min_c:max_c
-            dx = c - xc
-            dy = r - yc
-            w = exp(-(dx^2 + dy^2) / (2.0 * sigma^2))
-            local_weights[r - min_r + 1, c - min_c + 1] = w
-            local_sum += w
-        end
-
-        if local_sum > 0
-            for r in min_r:max_r, c in min_c:max_c
-                image[r, c] += signal_per_substep * (local_weights[r - min_r + 1, c - min_c + 1] / local_sum)
-            end
-        end
+Boresight `(ra, dec)` at time `t` after exposure start for the observation's
+tracking mode.
+"""
+function boresight_at(obs::Observation, target, observer, t)
+    t_s = to_unit(u"s", t)
+    ra0, dec0 = obs.boresight_ra, obs.boresight_dec
+    if obs.tracking == :sidereal
+        return (ra0, dec0)
+    elseif obs.tracking == :earth_fixed
+        omega = uconvert(u"rad/s", EARTH_ROTATION_RATE)
+        return (ra0 + omega * t_s, dec0)
+    else  # :rate_track keeps the initial target offset from the boresight
+        ra_a, dec_a = radec(target, observer)
+        ra_b, dec_b = radec(drift(target, t_s), drift(observer, t_s))
+        dra = rem2pi(ustrip(u"rad", ra_b - ra_a), RoundNearest) * u"rad"
+        return (ra0 + dra, dec0 + (dec_b - dec_a))
     end
+end
 
-    # Inject Poisson shot noise (on true electrons) and Gaussian read noise per pixel
-    noisy_image = zeros(Float64, nrows, ncols)
-    for r in 1:nrows, c in 1:ncols
-        lambda = max(0.0, image[r, c])
-        actual_electrons = rand(Poisson(lambda))
-        read_noise = rand(Normal(0.0, ccd.read_noise))
-        noisy_image[r, c] = actual_electrons + read_noise
-    end
+"""
+    gnomonic(ra, dec, ra0, dec0)
 
-    # Electron counts to final digital numbers
-    adu_image = round.(Int, noisy_image ./ ccd.gain)
+Tangent-plane coordinates `(xi, eta)` (rad, plain Float64) of `(ra, dec)`
+about `(ra0, dec0)`. Returns `(NaN, NaN)` for points >= 90 deg away.
+"""
+function gnomonic(ra, dec, ra0, dec0)
+    cd, sd = cos(dec), sin(dec)
+    cd0, sd0 = cos(dec0), sin(dec0)
+    cda, sda = cos(ra - ra0), sin(ra - ra0)
+    denom = sd0 * sd + cd0 * cd * cda
+    denom > 0 || return (NaN, NaN)
+    return (cd * sda / denom, (cd0 * sd - sd0 * cd * cda) / denom)
+end
 
-    return adu_image
+"""
+    sky_pixel(sensor, ra, dec, boresight; frame_size=sensor.detector.npixels)
 
+Continuous pixel coordinates `(x, y)` of a fixed sky position for a given
+boresight `(ra0, dec0)`.
+"""
+function sky_pixel(
+    s::Sensor,
+    ra,
+    dec,
+    boresight;
+    frame_size::Tuple{Int, Int} = s.detector.npixels
+)
+    xi, eta = gnomonic(ra, dec, boresight[1], boresight[2])
+    plate = uconvert(NoUnits, s.telescope.focal_length / s.detector.pixel_pitch)
+    nrows, ncols = frame_size
+    return ((ncols + 1) / 2 + plate * xi, (nrows + 1) / 2 + plate * eta)
+end
+
+"""
+    target_pixel(sensor, obs, target, observer, t=0u"s";
+                 frame_size=sensor.detector.npixels)
+
+Continuous pixel coordinates `(x, y)` = (column, row) of the target at time
+`t` after exposure start, with the boresight at the frame centre.
+"""
+function target_pixel(
+    s::Sensor,
+    obs::Observation,
+    target,
+    observer,
+    t = 0.0u"s";
+    frame_size::Tuple{Int, Int} = s.detector.npixels
+)
+    t_s = to_unit(u"s", t)
+    ra, dec = radec(drift(target, t_s), drift(observer, t_s))
+    return sky_pixel(s, ra, dec, boresight_at(obs, target, observer, t_s);
+                     frame_size = frame_size)
+end
+
+"""
+    pixel_velocity(sensor, obs, target, observer; dt=0.5u"s")
+
+Apparent target motion on the focal plane at exposure start, `(vx, vy)` in
+pixels per second (plain Float64), by central difference of
+`target_pixel`.
+"""
+function pixel_velocity(s::Sensor, obs::Observation, target, observer; dt = 0.5u"s")
+    h = to_unit(u"s", dt)
+    p_plus = target_pixel(s, obs, target, observer, h)
+    p_minus = target_pixel(s, obs, target, observer, -h)
+    scale = 2 * ustrip(u"s", h)
+    return ((p_plus[1] - p_minus[1]) / scale, (p_plus[2] - p_minus[2]) / scale)
 end
