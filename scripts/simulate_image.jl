@@ -1,6 +1,6 @@
 using Sensors
-using Unitful
 using LinearAlgebra
+using Statistics
 using StaticArrays
 using SPICE
 using Astrodynamics
@@ -8,53 +8,45 @@ using Astrodynamics
 # Furnsh
 furnsh_kernels()
 
-D_tel = 0.5u"m"
-ap_area = (pi / 4.0) * D_tel^2
+# All quantities are in SI units: m, s, rad.
+ARCSEC = pi / (180.0 * 3600.0)  # [rad/arcsec]
+
+D_tel = 0.5  # [m]
+ap_area = (pi / 4.0) * D_tel^2  # [m^2]
 
 my_ccd = CCD(
-    ap_area,
-    ap_area * 0.85,
-    4.0u"m",
-    0.5u"arcsec",     # Pixel scale
-    9.0u"μm",         # Pixel pitch
+    ap_area,           # Aperture area [m^2]
+    ap_area * 0.85,    # Effective aperture area [m^2]
+    4.0,               # Focal length [m]
+    0.5 * ARCSEC,      # Pixel scale [rad]
+    9.0e-6,            # Pixel pitch [m]
     0.80,              # Quantum efficiency
-    0.02u"s^-1",      # Dark current
-    3.5,               # Read noise, electrons/pixel
-    2.0u"s",          # Exposure time
-    2.3,               # Gain, electrons/ADU
-    550.0u"nm",       # Effective wavelength
-    1.5u"arcsec",     # PSF FWHM
-    0.0u"rad",        # Boresight RA
-    0.0u"rad"         # Boresight Dec
+    0.02,              # Dark current [electrons/s/pixel]
+    3.5,               # Read noise [electrons/pixel]
+    2.0,               # Exposure time [s]
+    2.3,               # Gain [electrons/ADU]
+    550.0e-9,          # Effective wavelength [m]
+    1.5 * ARCSEC,      # PSF FWHM [rad]
+    0.0,               # Boresight RA [rad]
+    0.0                # Boresight Dec [rad]
 )
 
-println("Defining state vectors in kilometers and km/s...")
+println("Defining state vectors in meters and m/s...")
 
-observer_state = SVector{6, Unitful.Quantity}(
-    6378.137u"km",
-    0.0u"km",
-    0.0u"km",
-    0.0u"km/s",
-    0.4651u"km/s",
-    0.0u"km/s"
+# [x, y, z, vx, vy, vz] in [m, m, m, m/s, m/s, m/s]
+observer_state = SVector{6, Float64}(
+    6378.137e3, 0.0, 0.0,
+    0.0, 465.1, 0.0
 )
 
-target_state = SVector{6, Unitful.Quantity}(
-    42164.0u"km",
-    1.0u"km",
-    0.5u"km",
-    -0.01u"km/s",
-    3.07u"km/s",
-    0.1u"km/s"
+target_state = SVector{6, Float64}(
+    42164.0e3, 1.0e3, 0.5e3,
+    -10.0, 3070.0, 100.0
 )
 
-sun_state = SVector{6, Unitful.Quantity}(
-    149_597_870.7u"km",
-    0.0u"km",
-    0.0u"km",
-    0.0u"km/s",
-    29.78u"km/s",
-    0.0u"km/s"
+sun_state = SVector{6, Float64}(
+    149_597_870.7e3, 0.0, 0.0,
+    0.0, 29.78e3, 0.0
 )
 
 target_radius = 2.5       # [m]

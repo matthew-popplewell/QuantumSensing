@@ -3,21 +3,21 @@
 Compute the solar phase angle for a target object given the positions of the sun and an observer.
 
 # Arguments
-- `target::SVector{6}`: The state vector (position and velocity) of the target object.
-- `sun::SVector{6}`: The state vector (position and velocity) of the sun.
-- `observer::SVector{6}`: The state vector (position and velocity) of the observer.
+- `target::SVector{6}`: The state vector of the target object [m, m/s].
+- `sun::SVector{6}`: The state vector of the sun [m, m/s].
+- `observer::SVector{6}`: The state vector of the observer [m, m/s].
 """
 function relative_directions(
     target::SVector{6},
     sun::SVector{6},
     observer::SVector{6}
 )
-    r_target = uconvert.(u"m", target[1:3])
-    r_sun = uconvert.(u"m", sun[1:3])
-    r_observer = uconvert.(u"m", observer[1:3])
+    r_target = target[1:3]
+    r_sun = sun[1:3]
+    r_observer = observer[1:3]
     object2sun = (r_sun - r_target) / norm(r_sun - r_target)
     object2observer = (r_observer - r_target) / norm(r_observer - r_target)
-    return SVector{3}(ustrip.(object2sun)), SVector{3}(ustrip.(object2observer))
+    return SVector{3}(object2sun), SVector{3}(object2observer)
 end
 
 """
@@ -38,15 +38,13 @@ end
 Compute the apparent radius of the sun as seen from the target object.
 
 # Arguments
-- `target::SVector{6}`: The state vector (position and velocity) of the target object.
-- `sun::SVector{6}`: The state vector (position and velocity) of the sun.
+- `target::SVector{6}`: The state vector of the target object [m, m/s].
+- `sun::SVector{6}`: The state vector of the sun [m, m/s].
 """
 function solar_apparent_radius(target::SVector{6}, sun::SVector{6})
-    _, sun_radius = bodvrd("SUN", "RADII", 3)
-    sun_radius = sun_radius * u"km"
+    _, sun_radii_km = bodvrd("SUN", "RADII", 3)
+    sun_radius = sun_radii_km[1] * 1e3  # SPICE returns km; convert to m
     distance = norm(sun[1:3] - target[1:3])
-    sun_radius = ustrip(u"m", sun_radius)
-    distance = ustrip(u"m", distance)
     return asin(sun_radius / distance)
 end
 
@@ -55,10 +53,10 @@ end
 Compute the exitance of a Lambertian extended source
 
 # Arguments
-- `target::SVector{6}`: The state vector (position and velocity) of the target object.
-- `sun::SVector{6}`: The state vector (position and velocity) of the sun.
-- `observer::SVector{6}`: The state vector (position and velocity) of the observer.
-- `radius::Float64`: The radius of the target object.
+- `target::SVector{6}`: The state vector of the target object [m, m/s].
+- `sun::SVector{6}`: The state vector of the sun [m, m/s].
+- `observer::SVector{6}`: The state vector of the observer [m, m/s].
+- `radius::Float64`: The radius of the target object [m].
 - `coeff_diffusion::Float64`: The diffusion coefficient of the target object's surface.
 """
 function lambertian_extended_source(

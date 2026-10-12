@@ -1,17 +1,17 @@
 module Sensors
 
 using LinearAlgebra
-using Unitful
 using StaticArrays
 using Random
 using Distributions
 using SPICE
 
-PLANCKS_CONSTANT = 6.62607015e-34u"J*s"
-SPEED_LIGHT = 299792458u"m/s"
-MAG_SUN = -26.74
-AU = 149597870700u"m"
-SOLAR_CONSTANT = 1361u"W/m^2"
+# Physical constants (SI units)
+PLANCKS_CONSTANT = 6.62607015e-34  # [J s]
+SPEED_LIGHT = 299792458.0          # [m/s]
+MAG_SUN = -26.74                   # Apparent magnitude of the Sun
+AU = 149597870700.0                # [m]
+SOLAR_CONSTANT = 1361.0            # [W/m^2]
 
 include("brdf.jl")
 include("signals.jl")
